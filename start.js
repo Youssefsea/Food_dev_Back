@@ -1,8 +1,26 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const app = express();
 const router = require('./router');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
+const { setupChatSocket } = require('./chat/chatSocket');
+
+// إنشاء HTTP server
+const server = http.createServer(app);
+
+// إعداد Socket.IO مع CORS
+const io = new Server(server, {
+    cors: {
+        origin: 'http://localhost:3000',
+        methods: ['GET', 'POST'],
+        credentials: true
+    }
+});
+
+// إعداد الشات
+setupChatSocket(io);
 
 app.use(cookieParser());
 
@@ -18,6 +36,7 @@ app.use(express.json());
 app.use('/', router);
 
 const port = 3444;
-app.listen(port, () => {
+server.listen(port, () => {
     console.log(`Server is running at http://localhost:${port}`);
+    console.log(`Socket.IO is ready for connections`);
 });

@@ -63,13 +63,16 @@ if(user.role!=='customer')
       return res.status(400).json({ error: "Invalid email or password" });
     }
 
-const Token=createToken(user);
 
-res.cookie('token',Token,{
-    httpOnly:true,
-    secure:true,
-    sameSite:'Strict',
-    maxAge:24*60*60*1000
+const token = createToken({id: user.id, role: user.role, name: user.name, email: user.email});
+console.log("Generated token:", token);
+
+res.cookie('token', token, {
+    httpOnly: true,
+    secure: true,
+
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000
 });
     return res.status(200).json({
       message: "Login successful",
@@ -79,7 +82,7 @@ res.cookie('token',Token,{
         email: user.email,
         role: user.role,
         phone: user.phone,
-        token: Token
+        token: token
       },
     });
   } catch (err) {
@@ -94,10 +97,15 @@ const getProfile=async(req,res)=>
     {
 
     try{
-        const user=req.user;
+        const user=req.user.id;
+        const [userRows]=await data.query("SELECT id,name,email,role,phone FROM users WHERE id=?", [user]);
+        if(userRows.length===0)
+        {
+            return res.status(404).json({error:"User not found"});
+        }
+        
 
-
-        return res.status(200).json({user});
+        return res.status(200).json({user:userRows[0]});
     }
     catch(err)
     {
@@ -125,7 +133,9 @@ if(!name || !phone)
 
 
     await data.query("UPDATE users SET name=?, phone=? WHERE id=?", [name, phone, userId]);
-    return res.status(200).json({message:"User info updated successfully to", name, phone });
+    console.log(`User info updated for user ID ${userId}: name=${name}, phone=${phone}`);
+
+    return res.status(200).json({message:"User info updated successfully", name, phone });
 
 }
 catch(err)

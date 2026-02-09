@@ -136,67 +136,103 @@ const uploadPaymentProof = async (req, res) => {
     }
 };
 
-
 const confirmPayment = async (req, res) => {
-    const connection = await data.getConnection();
-    try {
-        await connection.beginTransaction();
-        const { paymentId } = req.body;
+  const connection = await data.getConnection();
+  try {
+    await connection.beginTransaction();
+    const { paymentId } = req.body;
 
-        const [paymentRows] = await connection.query("SELECT * FROM payments WHERE id = ?", [paymentId]);
+    const [paymentRows] = await connection.query(
+      "SELECT * FROM payments WHERE id = ?", 
+      [paymentId]
+    );
 
-        if (paymentRows.length === 0) {
-            return res.status(404).json({ error: "Payment not found" });
-        }
-
-
-        const payment = paymentRows[0];
-
-        if (payment.status !== 'pending') {
-            return res.status(400).json({ error: "Payment already processed" });
-        }
-
-        await connection.query("UPDATE payments SET status = 'confirmed' WHERE id = ?", [paymentId]);
-
-        await connection.query("UPDATE orders SET status = 'paid' WHERE id = ?", [payment.order_id]);
-
-        const userID=await connection.query("SELECT user_id FROM orders WHERE id = ?", [payment.order_id]);
-
-        const WalletExit=await connection.query("SELECT * FROM wallets WHERE user_id = ?", [userID[0][0].user_id]);
-        if(WalletExit[0].length===0)
-        {
-            await connection.query("INSERT INTO wallets (user_id, balance) VALUES (?, ?)", [userID[0][0].user_id, payment.amount]);
-        }
-        else
-        {
-            await connection.query("UPDATE wallets SET balance = balance + ? WHERE user_id = ?", [payment.amount, userID[0][0].user_id]);
-        }
-
-        const [[wallet]] = await connection.query("SELECT balance FROM wallets WHERE user_id=?", [userID[0][0].user_id]);
-
-        await connection.commit();
-
-
-
-        return res.status(200).json({
-            message: "Payment confirmed successfully",
-            orderId: payment.order_id,
-            newStatus: 'paid',
-            userId: userID[0][0].user_id,
-            Wallet: wallet.balance
-
-
-        });
-
-    } catch (err) {
-        await connection.rollback();
-        console.error("Error confirming payment:", err);
-        return res.status(500).json({ error: "Internal server error" });
+    if(paymentRows.length === 0) {
+      return res.status(404).json({ error: "Payment not found" });
     }
-    finally {
-        connection.release();
+
+    const payment = paymentRows[0];
+
+    if(payment.status !== 'pending') {
+      return res.status(400).json({ error: "Payment already processed" });
     }
+
+    await connection.query(
+      "UPDATE payments SET status = 'confirmed' WHERE id = ?", 
+      [paymentId]
+    );
+
+
+
+    // جلب userId
+    const [userRows] = await connection.query(
+      "SELECT user_id FROM orders WHERE id = ?", 
+      [payment.order_id]
+    );
+    const userId = userRows[0].user_id;
+
+    // التعامل مع المحفظة
+    const [walletRows] = await connection.query(
+      "SELECT * FROM wallets WHERE user_id = ?", 
+      [userId]
+    );
+
+    if(walletRows.length === 0){
+      await connection.query(
+        "INSERT INTO wallets (user_id, balance) VALUES (?, ?)", 
+        [userId, payment.amount]
+      );
+    } else {
+      await connection.query(
+        "UPDATE wallets SET balance = balance + ? WHERE user_id = ?", 
+        [payment.amount, userId]
+      );
+    }
+
+    const [[wallet]] = await connection.query(
+      "SELECT balance FROM wallets WHERE user_id = ?", 
+      [userId]
+    );
+
+    // إنشاء chat room
+const [orderRows] = await connection.query(
+  `SELECT u.id AS restaurantUserId
+   FROM orders o
+   INNER JOIN restaurant_profiles rp ON o.restaurant_id = rp.id
+   INNER JOIN users u ON rp.user_id = u.id
+   WHERE o.id = ?`,
+  [payment.order_id]
+);
+
+const restaurantId = orderRows[0].restaurantUserId;
+
+
+    await connection.query(
+      "INSERT INTO chat_rooms (customer_id, restaurant_id, order_id) VALUES (?, ?, ?)", 
+      [userId, restaurantId, payment.order_id]
+    );
+
+    await connection.commit();
+
+    return res.status(200).json({
+      message: "Payment confirmed successfully and order marked as paid, wallet updated, and chat room created",
+      orderId: payment.order_id,
+      newStatus: 'paid',
+      userId,
+      Wallet: wallet.balance
+    });
+
+  } catch(err) {
+    await connection.rollback();
+    console.error("Error confirming payment:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  } finally {
+    connection.release();
+  }
 };
+
+
+
 
 
 
@@ -322,6 +358,26 @@ const getPendingPayments = async (req, res) => {
 };
 
 
+const getBalanceAtWallet=async(req,res)=>
+{
+    try
+    {
+const userId=req.user.id;
+const [walletRows]=await data.query("SELECT balance FROM wallets WHERE user_id = ?", [userId]);
+if(walletRows.length===0)
+{
+    return res.status(404).json({error:"Wallet not found for this user"});
+}
+return res.status(200).json({balance:walletRows[0].balance});
+
+    }
+    catch(err)
+    {
+        console.error("Error getting balance at wallet:", err);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+};
+
 module.exports = {
     processPayment,
     uploadPaymentProof,
@@ -329,5 +385,6 @@ module.exports = {
     rejectPayment,
     getPaymentStatus,
     getPendingPayments,
-    getPaymentStatusForOrder
+    getPaymentStatusForOrder,
+    getBalanceAtWallet
 };

@@ -1,5 +1,6 @@
 const data=require("../data/data");
 const bcryptJs=require("bcryptjs");
+const axios=require("axios");
 const {createToken}=require("../middelware/jwtmake");
 const { Readable } = require('stream');
 const cloudinary = require('../data/cloudTheImg');
@@ -76,6 +77,8 @@ const loginForRestaurant=async(req,res)=>
 try
 {
 const {email,password}=req.body;
+
+
 const [userRows]=await data.query("SELECT * FROM users WHERE email=?", [email]);
 if(userRows.length===0)
 {
@@ -92,13 +95,13 @@ if(!isPasswordValid)
     return res.status(400).json({error:"Invalid email or password"});
 }
 
-const token=createToken({id:restaurant.id,role:restaurant.role,name:restaurant.name,phone:restaurant.phone,email:restaurant.email});
+const token=createToken({id:restaurant.id,role:restaurant.role,name:restaurant.name,email:restaurant.email});
 
 res.cookie('token',token,{
-    httpOnly:true,
-    secure:true,
-    sameSite:'Strict',
-    maxAge:24*60*60*1000
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000
 });
 
 return res.status(200).json({
@@ -138,7 +141,6 @@ if(restaurantRows.length===0)
 
 
 const restaurantProfile=restaurantRows[0];
-
 const dishesRows=await data.query("SELECT * FROM dishes WHERE restaurant_id=?", [restaurantId]);
 
 const resMoreInfo= await data.query("SELECT name,email,phone,(SELECT delivery_fees FROM restaurant_profiles WHERE user_id=?) as delivery_fees FROM users WHERE id=?", [restaurantProfile.user_id,restaurantProfile.user_id]);
@@ -147,8 +149,9 @@ restaurantProfile.name=resMoreInfo[0][0].name;
 restaurantProfile.email=resMoreInfo[0][0].email;
 restaurantProfile.phone=resMoreInfo[0][0].phone;
 restaurantProfile.delivery_fees=resMoreInfo[0][0].delivery_fees;
+console.log("Restaurant More Info:", restaurantProfile);
 
-
+ 
 
 return res.status(200).json({"restaurantProfile":{
     name:restaurantProfile.name,email:restaurantProfile.email,phone:restaurantProfile.phone,description:restaurantProfile.description,location:restaurantProfile.location,allowed_radius_km:restaurantProfile.allowed_radius_km,open_time:restaurantProfile.open_time,close_time:restaurantProfile.close_time,delivery_fees:restaurantProfile.delivery_fees},"dishes":dishesRows[0]});
@@ -171,6 +174,12 @@ try
     await connection.beginTransaction();
     const restaurantId=req.user.restaurantProfileId;
     const {description,location,allowed_radius_km,open_time,close_time,name,email,phone,delivery_fees}=req.body;
+    const [existingRows]=await connection.query("SELECT id FROM users WHERE (email = ? OR phone = ?) AND id <> (SELECT user_id FROM restaurant_profiles WHERE id = ?)", [email,phone,restaurantId]);
+    if(existingRows.length>0)
+    {
+        return res.status(400).json({error:"Another user with this email or phone already exists"});
+    }
+
 
     await connection.query("UPDATE restaurant_profiles SET description=?, location=?, allowed_radius_km=?, open_time=?, close_time=? , delivery_fees=? WHERE id=?", [description,location,allowed_radius_km,open_time,close_time,delivery_fees,restaurantId]);
     await connection.query("UPDATE users SET name=?, email=?, phone=? WHERE id=(SELECT user_id FROM restaurant_profiles WHERE id=?)", [name,email,phone,restaurantId]);
@@ -188,6 +197,90 @@ catch(err)
     return res.status(500).json({error:"Internal server error"});   
 }};
 
+
+const updateRestaurantLocation = async (req, res) => {
+  const connection = await data.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    const restaurantId = req.user.restaurantProfileId;
+    const {
+      allowed_radius_km, 
+      delivery_area, 
+      area_name, 
+      can_deliver, 
+      can_reserve ,
+      location
+    } = req.body;
+    console.log("Area Name:", area_name);
+    
+    
+    await connection.query(
+      "UPDATE restaurant_profiles SET location = ?, allowed_radius_km = ? WHERE id = ?",
+      [location, allowed_radius_km, restaurantId]
+    );
+    
+    // تحويل delivery_area إلى polygon string
+    const polygonString = `POLYGON((${delivery_area
+      .map(coord => `${coord[0]} ${coord[1]}`)
+      .join(", ")}))`;
+    
+    console.log("📍 Updating polygon:", polygonString);
+    console.log("📍 Restaurant ID:", restaurantId);
+    
+    await connection.query(
+      "DELETE FROM restaurant_delivery_areas WHERE restaurant_id = ?",
+      [restaurantId]
+    );
+    
+    await connection.query(
+      `INSERT INTO restaurant_delivery_areas
+       (restaurant_id, area_name, can_deliver, can_reserve, delivery_area)
+       VALUES (?, ?, ?, ?, ST_GeomFromText(?, 4326))`,
+      [restaurantId, area_name, can_deliver, can_reserve, polygonString]
+    );
+    
+    await connection.commit();
+    
+    return res.status(200).json({ 
+      message: "Location and delivery area updated successfully" 
+    });
+    
+  } catch (err) {
+    console.error("Error updating location:", err);
+    await connection.rollback();
+    return res.status(500).json({ error: "Internal server error" });
+  } finally {
+    connection.release();
+  }
+};
+
+const changeRestaurantPassword = async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurantProfileId;
+    const { oldPassword, newPassword } = req.body;
+    const [userRows] = await data.query("SELECT u.password FROM users u JOIN restaurant_profiles rp ON u.id=rp.user_id WHERE rp.id=?", [restaurantId]);
+    if (userRows.length === 0) {
+      return res.status(400).json({ error: "Restaurant profile not found" });
+    }
+const restaurantPassword=userRows[0].password;
+const isOldPasswordValid=await bcryptJs.compare(oldPassword,restaurantPassword);
+if(!isOldPasswordValid)
+{
+    return res.status(400).json({error:"Old password is incorrect"});
+}
+
+const hashNewPassword=await bcryptJs.hash(newPassword,11);
+await data.query("UPDATE users SET password=? WHERE id=(SELECT user_id FROM restaurant_profiles WHERE id=?)", [hashNewPassword,restaurantId]);
+return res.status(200).json({message:"Password updated successfully"});
+
+    }
+    catch(err)
+    {
+        console.error("Error:",err);
+        return res.status(500).json({error:"Internal server error"});
+    }
+}
 
 const changeDeliveryFee=async(req,res)=>
 {
@@ -210,7 +303,26 @@ catch(err)
 }
 
 
+const restaurantProfileStatus=async(req,res)=>
+{
+try
+{
+    const restaurantId=req.user.restaurantProfileId;
+    const [statuOfRes]=await data.query("SELECT is_open FROM restaurant_profiles WHERE id=?", [restaurantId]);
+    if(statuOfRes.length===0)
+    {
+        return res.status(400).json({error:"Restaurant profile not found"});
+    }
+    const statu=statuOfRes[0].is_open;
 
+    return res.status(200).json({is_open:statu});
+}
+catch(err)
+{
+    console.error("Error:",err);
+    return res.status(500).json({error:"Internal server error"});   
+
+};}
 
 
 
@@ -228,6 +340,7 @@ if(statuOfRes.length===0)
 }
 const statu=statuOfRes[0][0].is_open;
 let  newStatu=statu;
+console.log("Current status:", statu);
 if(statu==1)
 {
     newStatu=0;
@@ -363,9 +476,10 @@ const getRestaurantOrders = async (req, res) => {
         let query = `
             SELECT o.id, o.total_amount, o.delivery_fee, o.status, 
                    o.is_reservation, o.reservation_date, o.location,
-                   o.created_at,
+                   o.created_at,o.lat, o.lng,p.status as payment_status,
                    u.name as customer_name, u.phone as customer_phone, u.email as customer_email
             FROM orders o
+            JOIN payments p ON o.id = p.order_id
             JOIN users u ON o.user_id = u.id
             WHERE o.restaurant_id = ?
         `;
@@ -438,4 +552,4 @@ const updateOrderStatus = async (req, res) => {
 
 
 
-module.exports={AddInfoRestaurant,loginForRestaurant,restaurantProfile,changeResturantinfo,openOrCloseRestaurant,changeDeliveryFee,getDashboardStats,getRestaurantOrders,updateOrderStatus};
+module.exports={changeRestaurantPassword,AddInfoRestaurant,loginForRestaurant,restaurantProfile,changeResturantinfo,openOrCloseRestaurant,changeDeliveryFee,getDashboardStats,getRestaurantOrders,updateOrderStatus,updateRestaurantLocation,restaurantProfileStatus};

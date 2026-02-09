@@ -6,6 +6,7 @@ const data = require('../data/data');
 const sureToken = (req, res, next) => {
   try {
     const token = req.cookies?.token || req.headers['authorization']?.split(' ')[1];
+console.log('Received token:', token);
 
     if (!token) {
       return res.status(401).send({ message: 'No token provided' });
@@ -15,6 +16,7 @@ const sureToken = (req, res, next) => {
 console.log('Authenticated user:', req.user);
     next();
   } catch (err) {
+    console.error('Token verification error:', err);
     return res.status(401).send({ message: 'Invalid or expired token' });
   }
 };

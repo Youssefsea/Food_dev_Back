@@ -1,5 +1,19 @@
 const data=require('../data/data');
+const axios = require('axios');
 
+const latLngToAddressOSM = async (lat, lng) => {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`;
+
+  try {
+    const response = await axios.get(url, {
+      headers: { "User-Agent": "NodeJS-App" } // مهم لنظام Nominatim
+    });
+    return response.data.display_name; // العنوان الكامل
+  } catch (error) {
+    console.error(error);
+    return "Error fetching address";
+  }
+};
 
 const lookForNearRestaurants = async (req, res) => {
   try {
@@ -63,6 +77,41 @@ if (!restaurantIds.length) {
   }
 };
 
+const lookForResByName=async(req,res)=>
+{
+  try
+  {
+
+    const {name}=req.query;
+    if(!name)
+    {
+        return res.status(400).json({error:"Name query parameter is required"});
+    }
+
+    const [restaurants] = await data.query(
+      `SELECT u.id as user_id,u.phone as phone, u.name AS restaurant_name,rp.id as id, rp.description, rp.location, rp.delivery_fees, rp.is_open, rda.can_deliver, rda.can_reserve
+       FROM users u
+       INNER JOIN restaurant_profiles rp ON u.id = rp.user_id
+       INNER JOIN restaurant_delivery_areas rda ON rp.id = rda.restaurant_id
+       WHERE u.name LIKE ?`,
+      [`%${name}%`]
+    );
+
+
+
+    if (restaurants.length === 0) {
+      return res.status(404).json({ message: "No restaurants found" });
+    }
+
+    return res.status(200).json({ restaurant: restaurants[0] });
+  }
+  catch(err)
+  {
+    console.error("Error:",err);
+    return res.status(500).json({error:"Internal server error"});
+  }
+}
+
 
 const lookforAllRestaurants=async(req,res)=>
 {
@@ -77,6 +126,7 @@ const [restaurants] = await data.query(`
   u.name AS restaurant_name,   
   rp.description,
   rp.location,
+  rp.delivery_fees,
   rda.can_deliver,
   rda.can_reserve
 FROM restaurant_profiles rp
@@ -195,6 +245,35 @@ else if(exitItem.length>0)
 
 };
 
+const updateDishQuantityInCart=async(req,res)=>
+{
+try
+{
+    const customerId=req.user.id;
+    const {dishId,quantity}=req.body;
+    const [exitCart]=await data.query("SELECT id FROM carts WHERE user_id=?", [customerId]);
+    if(exitCart.length===0)
+    {
+        return res.status(400).json({error:"Cart not found"});
+    }
+
+    const [exitItem]=await data.query("SELECT id FROM cart_items WHERE cart_id=? AND dish_id=?", [exitCart[0].id,dishId]);
+    if(exitItem.length===0)
+    {
+        return res.status(400).json({error:"Dish not found in cart"});
+    }
+
+    await data.query("UPDATE cart_items SET quantity=? WHERE id=?", [quantity, exitItem[0].id]);
+    return res.status(200).json({message:"Dish quantity updated in cart successfully"});
+
+}
+catch(err)
+{
+    console.error("Error:",err);
+    return res.status(500).json({error:"Internal server error"});
+
+}
+};
 
 const deleteDishFromCart=async(req,res)=>
 {
@@ -231,52 +310,199 @@ try
 };
 
 
-const getCartDetails=async(req,res)=>
-{
-try
-{
+const getCartDetails = async (req, res) => {
+  try {
+    const customerId = req.user.id;
 
-   const customerId=req.user.id;
+    const [existCart] = await data.query(
+      "SELECT id FROM carts WHERE user_id = ?",
+      [customerId]
+    );
 
-   const [exitCart]=await data.query("SELECT id FROM carts WHERE user_id=?", [customerId]);
-   if(exitCart.length===0)
-   {
-       return res.status(400).json({error:"Cart not found"});
-   }
+    if (existCart.length === 0) {
+      return res.status(404).json({ error: "Cart not found" });
+    }
 
-   const [cartItems]=await data.query("SELECT dish_id, quantity FROM cart_items WHERE cart_id=?", [exitCart[0].id]);
-   if(cartItems.length===0){
- return res.status(200).json({cartItems:[]});
-}
+    const cartId = existCart[0].id;
+    console.log("Cart ID:", cartId);
+    const [cartItems] = await data.query(
+      "SELECT dish_id, quantity FROM cart_items WHERE cart_id = ?",
+      [cartId]
+    );
+    console.log("Cart Items:", cartItems);
+  
+    if (cartItems.length === 0) {
+      console.log("Cart is empty");
+      return res.status(200).json({
+        cartItems: [],
+        groupedByRestaurant: [],
+        summary: {
+          totalRestaurants: 0,
+          totalItems: 0,
+          grandTotal: 0
+        }
+      });
+    }
 
-const dishIds=cartItems.map(item=>item.dish_id);
-if (!dishIds.length) {
-  return res.status(400).json({ error: "No dishes found in cart" });
-}
+    const dishIds = cartItems.map(i => Number(i.dish_id));
+    console.log("Dish IDs in cart:", dishIds);
+
+    const placeholders = dishIds.map(() => "?").join(",");
+
+    const [dishes] = await data.query('Select d.id,d.image,d.name,d.description,d.price,d.restaurant_id,rp.location as location,rp.delivery_fees,rda.can_reserve,rda.can_deliver, rp.user_id as restaurant_user_id, u.name as restaurant_name from dishes d inner join restaurant_delivery_areas as rda on d.restaurant_id = rda.restaurant_id inner join restaurant_profiles rp on d.restaurant_id = rp.id inner join users u on rp.user_id = u.id where d.id IN (' + placeholders + ')', dishIds);
+     
+    console.log("Dishes fetched:", dishes);
 
 
-const [dishes]=await data.query(`SELECT id, name, description, price FROM dishes WHERE id IN (${dishIds.map(()=>'?').join(',')})`, dishIds);
 
-const detailedCartItems=cartItems.map(item=>{
-    const dish=dishes.find(d=>d.id===item.dish_id);
-    return {
-        dishId:item.dish_id,
-        quantity:item.quantity,
-        name:dish.name,
-        description:dish.description,
-        price:dish.price
-    };
-});
+    const detailedCartItems = cartItems
+      .map(item => {
+        const dish = dishes.find(d => d.id === item.dish_id);
 
-   return res.status(200).json({cartItems:detailedCartItems});
+        // لو الطبق اتحذف من الداتا بيز
+        if (!dish) return null;
+const deliveryFee = dish.delivery_fees;
+        return {
+          dishId: item.dish_id,
+          quantity: item.quantity,
+          image: dish.image,
+          name: dish.name,
+          description: dish.description,
+          price: dish.price,
+          restaurantId: dish.restaurant_id,
+          restaurantName: dish.restaurant_name,
+          restaurantLocation: dish.location,
+          restaurantCanReserve: dish.can_reserve,
+          restaurantCanDeliver: dish.can_deliver,
+          is_open: dish.is_open,
+          deliveryFee: dish.delivery_fees,
 
-}catch(err)
-{
-    console.error("Error:",err);
-    return res.status(500).json({error:"Internal server error"});
+          subtotal: dish.price * item.quantity
+        };
+      })
+      .filter(Boolean);
 
-}
+    
+
+    const groupedByRestaurant = detailedCartItems.reduce((acc, item) => {
+      let restaurant = acc.find(
+        r => r.restaurantId === item.restaurantId
+      );
+
+      if (!restaurant) {
+        restaurant = {
+          restaurantId: item.restaurantId,
+          restaurantName: item.restaurantName,
+          restaurantCanReserve: item.restaurantCanReserve,
+          restaurantCanDeliver: item.restaurantCanDeliver,
+          restaurantLocation: item.restaurantLocation,
+          deliveryFee: item.deliveryFee,
+          dishes: [],
+          totalItems: 0,
+          totalPrice: 0
+        };
+
+        acc.push(restaurant);
+      }
+
+      restaurant.dishes.push({
+
+        dishId: item.dishId,
+        image: item.image,
+        quantity: item.quantity,
+        name: item.name,
+        description: item.description,
+        price: item.price,
+        subtotal: item.subtotal
+      });
+
+      restaurant.totalItems += item.quantity;
+      restaurant.totalPrice += item.subtotal;
+
+      return acc;
+    }, []);
+
+    // أضف إحداثيات مركز المطعم لكل مطعم
+    for (let i = 0; i < groupedByRestaurant.length; i++) {
+      const restaurantId = groupedByRestaurant[i].restaurantId;
+      
+      const [deliveryAreas] = await data.query(
+        "SELECT delivery_area FROM restaurant_delivery_areas WHERE restaurant_id=?",
+        [restaurantId]
+      );
+
+      let restaurantLat = null, restaurantLng = null;
+      if (deliveryAreas.length > 0) {
+        const points = deliveryAreas[0].delivery_area[0];
+        let sumLat = 0, sumLng = 0;
+        points.forEach(p => {
+          sumLng += p.x;
+          sumLat += p.y;
+        });
+        restaurantLng = sumLng / points.length;
+        restaurantLat = sumLat / points.length;
+      }
+
+      groupedByRestaurant[i] = {
+        ...groupedByRestaurant[i],
+        restaurantLat,
+        restaurantLng
+      };
+    }
+
+    const grandTotal = groupedByRestaurant.reduce(
+      (sum, r) => sum + r.totalPrice,
+      0
+    );
+
+    const totalItems = groupedByRestaurant.reduce(
+      (sum, r) => sum + r.totalItems,
+      0
+    );
+
+    return res.status(200).json({
+      cartItems: detailedCartItems,
+      groupedByRestaurant,
+      summary: {
+        totalRestaurants: groupedByRestaurant.length,
+        totalItems,
+        grandTotal
+      }
+    });
+
+  } catch (err) {
+    console.error("getCartDetails error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 };
+
+
+const countAtCart=async(req,res)=>
+  {
+try{
+const customerId=req.user.id;
+const [existCart]=await data.query("SELECT id FROM carts WHERE user_id=?", [customerId]);
+if(existCart.length===0){
+    return res.status(400).json({error:"Cart not found"});
+}
+
+const cartId=existCart[0].id;
+const [cartItems]=await data.query("SELECT dish_id,quantity FROM cart_items WHERE cart_id=?", [cartId]);
+if(cartItems.length===0){
+    return res.status(400).json({error:"Cart is empty"});
+}
+
+const count=cartItems.reduce((sum,item)=>sum+item.quantity,0);
+return res.status(200).json({count});
+
+}
+catch(err)
+{
+  console.error("Error:",err);
+  return res.status(500).json({error:"Internal server error"});
+}
+
+  }
 
 
 
@@ -290,25 +516,37 @@ const makeOrder = async (req, res) => {
     await connection.beginTransaction();
 
     const customerId = req.user.id;
-    const { is_reservation, reservation_date, location, lat, lng } = req.body;
-const imgPay=req.files;
+    // أضفنا restaurantId
+    const { is_reservation, reservation_date, lat, lng, restaurantId } = req.body;
+    const location = await latLngToAddressOSM(lat, lng);
+
     const [cartRows] = await connection.query("SELECT id FROM carts WHERE user_id=?", [customerId]);
 
     if (cartRows.length === 0)
       return res.status(400).json({ error: "Cart not found" });
 
     const cartId = cartRows[0].id;
-    const [cartItems] = await connection.query(
-      `SELECT ci.dish_id, ci.quantity, d.price, d.restaurant_id, r.location as restaurant_location
-       FROM cart_items ci
-       JOIN dishes d ON ci.dish_id = d.id
-       JOIN restaurant_profiles r ON d.restaurant_id = r.id
-       WHERE ci.cart_id=?`,
-      [cartId]
-    );
+    
+    // لو فيه restaurantId، جيب بس الأطباق بتاعت المطعم ده
+    let cartItemsQuery = `
+      SELECT ci.dish_id, ci.quantity, d.price, d.restaurant_id, r.location as restaurant_location
+      FROM cart_items ci
+      JOIN dishes d ON ci.dish_id = d.id
+      JOIN restaurant_profiles r ON d.restaurant_id = r.id
+      WHERE ci.cart_id=?
+    `;
+    
+    const queryParams = [cartId];
+    
+    if (restaurantId) {
+      cartItemsQuery += ` AND d.restaurant_id = ?`;
+      queryParams.push(restaurantId);
+    }
+    
+    const [cartItems] = await connection.query(cartItemsQuery, queryParams);
 
     if (cartItems.length === 0)
-      return res.status(400).json({ error: "Cart is empty" });
+      return res.status(400).json({ error: "Cart is empty or no items from selected restaurant" });
 
     const groupOfResCartDishes = {};
     for (const item of cartItems) {
@@ -318,145 +556,146 @@ const imgPay=req.files;
       groupOfResCartDishes[item.restaurant_id].push(item);
     }
 
- 
-
     const restaurantCanResv = await data.query('SELECT restaurant_id FROM restaurant_delivery_areas WHERE can_reserve=1');
     if (restaurantCanResv[0].length === 0 && is_reservation) {
       throw new Error("No restaurant available to receive reservations");
     }
 
-  const createdOrders = [];
-const failedOrders = [];
+    const createdOrders = [];
+    const failedOrders = [];
+    const orderedDishIds = []; // لتتبع الأطباق اللي اتعمل لها order
 
-for (const restaurantId of Object.keys(groupOfResCartDishes)) {
+    for (const resId of Object.keys(groupOfResCartDishes)) {
+      try {
+        const [resRows] = await connection.query(
+          "SELECT is_open, location, allowed_radius_km, delivery_fees FROM restaurant_profiles WHERE id=?",
+          [resId]
+        );
 
-  try {
+        if (resRows.length === 0 || !resRows[0].is_open) {
+          failedOrders.push({
+            restaurantId: resId,
+            reason: "Restaurant is closed"
+          });
+          continue;
+        }
 
-    const [resRows] = await connection.query(
-      "SELECT is_open, location,allowed_radius_km, delivery_fees FROM restaurant_profiles WHERE id=?",
-      [restaurantId]
-    );
+        const deliveryareas = await data.query(
+          "SELECT delivery_area FROM restaurant_delivery_areas WHERE restaurant_id=?",
+          [resId]
+        );
 
-    if (resRows.length === 0 || !resRows[0].is_open) {
-      failedOrders.push({
-        restaurantId,
-        reason: "Restaurant is closed"
-      });
-      continue; 
+        if (deliveryareas[0].length === 0) {
+          failedOrders.push({
+            restaurantId: resId,
+            reason: "Restaurant has no delivery areas defined"
+          });
+          continue;
+        }
+
+        const pointsNested = deliveryareas[0][0].delivery_area;
+        const points = pointsNested[0];
+        let sumLat = 0, sumLng = 0;
+
+        points.forEach(p => {
+          sumLng += p.x;
+          sumLat += p.y;
+        });
+
+        const lngOfRes = sumLng / points.length;
+        const latOfRes = sumLat / points.length;
+
+        let totalAmount = 0;
+        groupOfResCartDishes[resId].forEach(item => {
+          totalAmount += item.price * item.quantity;
+        });
+
+        let deliveryFee = 0;
+        const allowedRadius = resRows[0].allowed_radius_km;
+        const delivery_fees = resRows[0].delivery_fees;
+
+        const [distanceRows] = await connection.query(
+          `SELECT ST_Distance_Sphere(POINT(?, ?), POINT(?, ?)) AS distance`,
+          [lng, lat, lngOfRes, latOfRes]
+        );
+
+        const distanceInKm = distanceRows[0].distance / 1000;
+
+        if (distanceInKm > allowedRadius) {
+          failedOrders.push({
+            restaurantId: resId,
+            reason: "Delivery location is outside allowed radius",
+            allowedRadius,
+            distanceInKm
+          });
+          continue;
+        }
+
+        deliveryFee = parseFloat((delivery_fees * distanceInKm).toFixed(2));
+        totalAmount += deliveryFee;
+
+        const [orderResult] = await connection.query(
+          `INSERT INTO orders (user_id, restaurant_id, is_reservation, reservation_date, location, lat, lng, total_amount, delivery_fee, status) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+          [customerId, resId, is_reservation || false, reservation_date || null, location, lat, lng, totalAmount, deliveryFee]
+        );
+
+        const orderId = orderResult.insertId;
+
+        for (const item of groupOfResCartDishes[resId]) {
+          await connection.query(
+            `INSERT INTO order_items (order_id, dish_id, quantity, price) VALUES (?, ?, ?, ?)`,
+            [orderId, item.dish_id, item.quantity, item.price]
+          );
+          // أضف الـ dish_id للقائمة عشان نمسحه بعدين
+          orderedDishIds.push(item.dish_id);
+        }
+
+        createdOrders.push({
+          orderId,
+          restaurantId: resId,
+          totalAmount,
+          deliveryFee,
+          customerLocation: {
+            address: location,
+            lat: lat,
+            lng: lng
+          }
+        });
+
+      } catch (err) {
+        failedOrders.push({
+          restaurantId: resId,
+          reason: err.message
+        });
+        continue;
+      }
     }
 
-    const deliveryareas = await data.query(
-      "SELECT delivery_area FROM restaurant_delivery_areas WHERE restaurant_id=?",
-      [restaurantId]
-    );
-
-    if (deliveryareas[0].length === 0) {
-      failedOrders.push({
-        restaurantId,
-        reason: "Restaurant has no delivery areas defined"
-      });
-      continue;
-    }
-
-    const pointsNested = deliveryareas[0][0].delivery_area;
-const points = pointsNested[0]; 
-let sumLat = 0, sumLng = 0;
-
-points.forEach(p => {
-  sumLng += p.x; 
-  sumLat += p.y; 
-});
-
-const lngOfRes = sumLng / points.length;
-const latOfRes = sumLat / points.length;
-
-console.log(`Points for restaurant ${restaurantId}:`, points);
-console.log(`Sum of lng: ${sumLng}, Sum of lat: ${sumLat}`);
-console.log(`Restaurant ${restaurantId} center point: (${latOfRes}, ${lngOfRes})`);
-
-
-    let totalAmount = 0;
-    groupOfResCartDishes[restaurantId].forEach(item => {
-      totalAmount += item.price * item.quantity;
-    });
-
-    let deliveryFee = 0;
-    const allowedRadius = resRows[0].allowed_radius_km;
-    const delivery_fees = resRows[0].delivery_fees;
-
-    const [distanceRows] = await connection.query(
-      `SELECT ST_Distance_Sphere(POINT(?, ?), POINT(?, ?)) AS distance`,
-      [lng, lat, lngOfRes, latOfRes]
-    );
-
-    const distanceInKm = distanceRows[0].distance / 1000;
-
-    if (distanceInKm > allowedRadius) {
-      failedOrders.push({
-        restaurantId,
-        reason: "Delivery location is outside allowed radius",
-        allowedRadius,
-        distanceInKm
-      });
-      continue;
-    }
-
-    deliveryFee = parseFloat((delivery_fees * distanceInKm).toFixed(2));
-    totalAmount += deliveryFee;
-
-    const [orderResult] = await connection.query(
-      `INSERT INTO orders (user_id, restaurant_id, is_reservation, reservation_date, location, total_amount, delivery_fee, status) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [customerId, restaurantId, is_reservation || false, reservation_date || null, location, totalAmount, deliveryFee]
-    );
-
-    const orderId = orderResult.insertId;
-
-    for (const item of groupOfResCartDishes[restaurantId]) {
+    // امسح بس الأطباق اللي اتعمل لها order
+    if (orderedDishIds.length > 0) {
       await connection.query(
-        `INSERT INTO order_items (order_id, dish_id, quantity, price) VALUES (?, ?, ?, ?)`,
-        [orderId, item.dish_id, item.quantity, item.price]
+        `DELETE FROM cart_items WHERE cart_id=? AND dish_id IN (${orderedDishIds.map(() => '?').join(',')})`,
+        [cartId, ...orderedDishIds]
       );
     }
 
-    createdOrders.push({
-      orderId,
-      restaurantId,
-      totalAmount,
-      deliveryFee
-    });
-
-  } catch (err) {
-
-    failedOrders.push({
-      restaurantId,
-      reason: err.message
-    });
-
-    continue;
-  }
-}
-
-
-    await connection.query("DELETE FROM cart_items WHERE cart_id=?", [cartId]);
-
     if (createdOrders.length === 0) {
-  await connection.rollback();
-  return res.status(400).json({
-    error: "No orders created",
-    failedOrders
-  });
-}
-
+      await connection.rollback();
+      return res.status(400).json({
+        error: "No orders created",
+        failedOrders
+      });
+    }
 
     await connection.commit();
 
-  return res.status(201).json({
-  message: "Order processing completed",
-  createdOrders,
-  failedOrders
-});
-    
+    return res.status(201).json({
+      message: "Order processing completed",
+      createdOrders,
+      failedOrders
+    });
+
   } catch (err) {
     await connection.rollback();
     console.error("Error:", err.message);
@@ -467,8 +706,64 @@ console.log(`Restaurant ${restaurantId} center point: (${latOfRes}, ${lngOfRes})
 };
 
 
+const getOrdersForCustomer=async(req,res)=>
+{
+  try
+  {
+const customerId=req.user.id;
+const [orders] = await data.query(`
+  SELECT 
+      o.id,
+      o.restaurant_id,
+      o.total_amount,
+      o.status,
+      o.created_at,
+      o.is_reservation,
+      o.reservation_date,
+
+
+      ol.dish_id,
+
+      d.name  AS dish_name,
+      d.image AS dish_image,
+      d.price AS dish_price,
+
+      p.status AS payment_status,
+
+      u.name AS restaurant_name
+
+  FROM orders o
+
+  INNER JOIN restaurant_profiles rp 
+      ON o.restaurant_id = rp.id
+
+  INNER JOIN users u 
+      ON rp.user_id = u.id
+
+  INNER JOIN order_items ol 
+      ON o.id = ol.order_id
+
+  INNER JOIN dishes d
+      ON d.id = ol.dish_id
+
+      Inner Join payments p
+      ON p.order_id = o.id
+
+  WHERE o.user_id = ?
+
+  ORDER BY o.created_at DESC
+`, [customerId]);
+
+return res.status(200).json({orders});
+
+  }catch(err)
+  {
+    console.error("Error:",err);
+    return res.status(500).json({error:"Internal server error"});
+  }
+}
 
 
 
 
-module.exports={addDishToCart,deleteDishFromCart,getCartDetails,lookForNearRestaurants,restaurantsWhoCanResiveOrder,makeOrder,lookforAllRestaurants};
+module.exports={getOrdersForCustomer,countAtCart,addDishToCart,deleteDishFromCart,getCartDetails,lookForNearRestaurants,restaurantsWhoCanResiveOrder,makeOrder,lookforAllRestaurants,lookForResByName,updateDishQuantityInCart};
