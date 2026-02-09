@@ -76,10 +76,11 @@ The API features **geospatial queries** for finding nearby restaurants based on 
 ### Technical Features
 - 🔐 **JWT Authentication** - Secure token-based authentication
 - 🍪 **HTTP-Only Cookies** - Secure session management
+- � **Safari/iOS Support** - Token fallback via Authorization header for mobile browsers
 - 📸 **Image Upload** - Cloudinary integration for images
 - 🗺️ **Geospatial Queries** - MySQL spatial functions for delivery zones
 - 🔄 **Transaction Support** - Database transactions for data integrity
-- 🛡️ **Role-Based Access** - Customer, Restaurant, Admin roles
+- 🛡️ **Role-Based Access** - Customer, Restaurant, Admin roles with middleware protection
 
 ---
 
@@ -995,7 +996,31 @@ CREATE TABLE payments (
 ### Authentication
 - **JWT Tokens** - Secure, stateless authentication
 - **HTTP-Only Cookies** - Prevents XSS attacks
-- **Token Expiration** - 24-hour validity
+- **Authorization Header Fallback** - Supports `Bearer` token for Safari/iOS compatibility
+- **Token Expiration** - 2-hour validity
+- **Minimal JWT Payload** - Only essential data (id, name, email, role) for security
+
+### Token Handling
+The API supports dual authentication methods for maximum compatibility:
+
+```javascript
+// Backend automatically checks both:
+const token = req.cookies?.token || req.headers['authorization']?.split(' ')[1];
+```
+
+**Why?** Safari on iOS has strict cookie policies (ITP) that may block cookies. The Authorization header works as a fallback.
+
+**Frontend Implementation:**
+```javascript
+// Axios interceptor for automatic token handling
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('customerToken') || localStorage.getItem('vendorToken');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+```
 
 ### Password Security
 - **bcryptjs** - Industry-standard password hashing
@@ -1005,6 +1030,33 @@ CREATE TABLE payments (
 - **CORS Configuration** - Controlled cross-origin access
 - **Role-Based Access Control** - Separate middleware for each role
 - **Input Validation** - Request body validation
+
+### Role-Based Middleware
+
+Protect routes based on user type:
+
+```javascript
+// Restaurant-only routes
+router.get('/dashboard', sureToken, restaurantOnly, getDashboard);
+router.post('/add-dish', sureToken, restaurantOnly, addDish);
+
+// Customer-only routes  
+router.post('/place-order', sureToken, customerOnly, placeOrder);
+router.get('/view-cart', sureToken, customerOnly, viewCart);
+
+// Admin-only routes
+router.post('/confirmPayment', sureToken, adminOnly, confirmPayment);
+```
+
+**Available Middleware:**
+| Middleware | Purpose |
+|------------|----------|
+| `sureToken` | Validates JWT token |
+| `customerOnly` | Restricts to customers |
+| `restaurantOnly` | Restricts to restaurants |
+| `adminOnly` | Restricts to admins |
+| `verifyRoleForRestaurant` | Validates restaurant profile exists |
+| `verifyResturntAreActive` | Checks if restaurant is verified |
 
 ### Data Protection
 - **Parameterized Queries** - SQL injection prevention
