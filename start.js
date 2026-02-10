@@ -35,7 +35,7 @@ app.use(express.json());
 
 app.use('/', router);
 
-const port = 3444;
+const port = process.env.PORT || 3444;
 server.listen(port, () => {
     console.log(`Server is running at http://localhost:${port}`);
     console.log(`Socket.IO is ready for connections`);
