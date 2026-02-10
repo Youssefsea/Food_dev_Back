@@ -143,6 +143,7 @@ if(restaurants.length===0)
 {
     return res.status(404).json({error:"No restaurants found"});
 }
+console.log("Restaurants found:", restaurants);
 return res.status(200).json({restaurants});
 }
 
@@ -706,62 +707,78 @@ const makeOrder = async (req, res) => {
 };
 
 
-const getOrdersForCustomer=async(req,res)=>
-{
-  try
-  {
-const customerId=req.user.id;
-const [orders] = await data.query(`
-  SELECT 
-      o.id,
-      o.restaurant_id,
-      o.total_amount,
-      o.status,
-      o.created_at,
-      o.is_reservation,
-      o.reservation_date,
+const getOrdersForCustomer = async (req, res) => {
+  try {
+    const customerId = req.user.id;
 
+    const [rows] = await data.query(
+      `
+      SELECT 
+          o.id,
+          o.restaurant_id,
+          o.total_amount,
+          o.status,
+          o.created_at,
+          o.is_reservation,
+          o.reservation_date,
 
-      ol.dish_id,
+          ol.dish_id,
+          d.name AS dish_name,
+          d.image AS dish_image,
+          d.price AS dish_price,
 
-      d.name  AS dish_name,
-      d.image AS dish_image,
-      d.price AS dish_price,
+          p.status AS payment_status,
+          u.name AS restaurant_name
 
-      p.status AS payment_status,
+      FROM orders o
+      INNER JOIN restaurant_profiles rp ON o.restaurant_id = rp.id
+      INNER JOIN users u ON rp.user_id = u.id
+      INNER JOIN order_items ol ON o.id = ol.order_id
+      INNER JOIN dishes d ON d.id = ol.dish_id
+      INNER JOIN payments p ON p.order_id = o.id
+      WHERE o.user_id = ?
+      ORDER BY o.created_at DESC
+      `,
+      [customerId]
+    );
 
-      u.name AS restaurant_name
+    // تجميع الأطباق جوه كل طلب
+    const ordersMap = {};
 
-  FROM orders o
+    rows.forEach((row) => {
+      if (!ordersMap[row.id]) {
+        ordersMap[row.id] = {
+          id: row.id,
+          restaurant_id: row.restaurant_id,
+          restaurant_name: row.restaurant_name,
+          total_amount: row.total_amount,
+          status: row.status,
+          created_at: row.created_at,
+          is_reservation: row.is_reservation,
+          reservation_date: row.reservation_date,
+          payment_status: row.payment_status,
+          items: [],
+        };
+      }
 
-  INNER JOIN restaurant_profiles rp 
-      ON o.restaurant_id = rp.id
+      // إضافة الطبق للطلب
+      ordersMap[row.id].items.push({
+        dish_id: row.dish_id,
+        dish_name: row.dish_name,
+        dish_image: row.dish_image,
+        dish_price: row.dish_price,
+      });
+    });
 
-  INNER JOIN users u 
-      ON rp.user_id = u.id
+    const orders = Object.values(ordersMap);
 
-  INNER JOIN order_items ol 
-      ON o.id = ol.order_id
-
-  INNER JOIN dishes d
-      ON d.id = ol.dish_id
-
-      Inner Join payments p
-      ON p.order_id = o.id
-
-  WHERE o.user_id = ?
-
-  ORDER BY o.created_at DESC
-`, [customerId]);
-
-return res.status(200).json({orders});
-
-  }catch(err)
-  {
-    console.error("Error:",err);
-    return res.status(500).json({error:"Internal server error"});
+    return res.status(200).json({ orders });
+  } catch (err) {
+    console.error("Error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
-}
+};
+
 
 
 
