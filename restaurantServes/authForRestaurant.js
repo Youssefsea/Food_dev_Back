@@ -339,16 +339,8 @@ if(statuOfRes.length===0)
 
 }
 const statu=statuOfRes[0][0].is_open;
-let  newStatu=statu;
+let  newStatu = !statu;
 console.log("Current status:", statu);
-if(statu==1)
-{
-    newStatu=0;
-}
-else if(statu==0)
-{
-    newStatu=1;
-}
 await data.query("UPDATE restaurant_profiles SET is_open=? WHERE id=?", [newStatu, restaurantId]);
 return res.status(200).json({message:"Restaurant status updated successfully", is_open:newStatu});
 }
@@ -386,7 +378,7 @@ const getDashboardStats = async (req, res) => {
 
         // Get available dishes count
         const [availableDishes] = await data.query(
-            "SELECT COUNT(*) as available_dishes FROM dishes WHERE restaurant_id = ? AND is_available = 1",
+            "SELECT COUNT(*) as available_dishes FROM dishes WHERE restaurant_id = ? AND is_available = TRUE",
             [restaurantId]
         );
 
@@ -395,7 +387,7 @@ const getDashboardStats = async (req, res) => {
             `SELECT COUNT(*) as today_orders, 
                     COALESCE(SUM(total_amount), 0) as today_revenue
              FROM orders 
-             WHERE restaurant_id = ? AND DATE(created_at) = CURDATE()`,
+             WHERE restaurant_id = ? AND DATE(created_at) = CURRENT_DATE`,
             [restaurantId]
         );
 

@@ -56,7 +56,7 @@ const getAllResDishes = async (req, res) => {
     const result = await data.query(`
       SELECT 
           restaurant_id,
-          GROUP_CONCAT(image ORDER BY image SEPARATOR ',') AS images
+          STRING_AGG(image, ',' ORDER BY image) AS images
       FROM (
           SELECT 
               restaurant_id,

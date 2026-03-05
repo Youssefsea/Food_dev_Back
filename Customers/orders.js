@@ -134,7 +134,7 @@ INNER JOIN restaurant_delivery_areas rda
   ON rp.id = rda.restaurant_id
 INNER JOIN users u
   ON rp.user_id = u.id
-WHERE rp.is_open = 1
+WHERE rp.is_open = TRUE
 
 `);
 
@@ -159,7 +159,7 @@ const restaurantsWhoCanResiveOrder=async(req,res)=>
 try
 {
 
-const [restaurantIds]=await data.query('SELECT restaurant_id FROM restaurant_delivery_areas WHERE can_reserve=1');
+const [restaurantIds]=await data.query('SELECT restaurant_id FROM restaurant_delivery_areas WHERE can_reserve=TRUE');
 
 
 
@@ -428,20 +428,14 @@ const deliveryFee = dish.delivery_fees;
       const restaurantId = groupedByRestaurant[i].restaurantId;
       
       const [deliveryAreas] = await data.query(
-        "SELECT delivery_area FROM restaurant_delivery_areas WHERE restaurant_id=?",
+        "SELECT ST_Y(ST_Centroid(delivery_area)) as lat, ST_X(ST_Centroid(delivery_area)) as lng FROM restaurant_delivery_areas WHERE restaurant_id=?",
         [restaurantId]
       );
 
       let restaurantLat = null, restaurantLng = null;
       if (deliveryAreas.length > 0) {
-        const points = deliveryAreas[0].delivery_area[0];
-        let sumLat = 0, sumLng = 0;
-        points.forEach(p => {
-          sumLng += p.x;
-          sumLat += p.y;
-        });
-        restaurantLng = sumLng / points.length;
-        restaurantLat = sumLat / points.length;
+        restaurantLat = parseFloat(deliveryAreas[0].lat);
+        restaurantLng = parseFloat(deliveryAreas[0].lng);
       }
 
       groupedByRestaurant[i] = {
@@ -557,7 +551,7 @@ const makeOrder = async (req, res) => {
       groupOfResCartDishes[item.restaurant_id].push(item);
     }
 
-    const restaurantCanResv = await data.query('SELECT restaurant_id FROM restaurant_delivery_areas WHERE can_reserve=1');
+    const restaurantCanResv = await data.query('SELECT restaurant_id FROM restaurant_delivery_areas WHERE can_reserve=TRUE');
     if (restaurantCanResv[0].length === 0 && is_reservation) {
       throw new Error("No restaurant available to receive reservations");
     }
@@ -582,7 +576,7 @@ const makeOrder = async (req, res) => {
         }
 
         const deliveryareas = await data.query(
-          "SELECT delivery_area FROM restaurant_delivery_areas WHERE restaurant_id=?",
+          "SELECT ST_Y(ST_Centroid(delivery_area)) as lat, ST_X(ST_Centroid(delivery_area)) as lng FROM restaurant_delivery_areas WHERE restaurant_id=?",
           [resId]
         );
 
@@ -594,17 +588,8 @@ const makeOrder = async (req, res) => {
           continue;
         }
 
-        const pointsNested = deliveryareas[0][0].delivery_area;
-        const points = pointsNested[0];
-        let sumLat = 0, sumLng = 0;
-
-        points.forEach(p => {
-          sumLng += p.x;
-          sumLat += p.y;
-        });
-
-        const lngOfRes = sumLng / points.length;
-        const latOfRes = sumLat / points.length;
+        const lngOfRes = parseFloat(deliveryareas[0][0].lng);
+        const latOfRes = parseFloat(deliveryareas[0][0].lat);
 
         let totalAmount = 0;
         groupOfResCartDishes[resId].forEach(item => {
@@ -616,7 +601,7 @@ const makeOrder = async (req, res) => {
         const delivery_fees = resRows[0].delivery_fees;
 
         const [distanceRows] = await connection.query(
-          `SELECT ST_Distance_Sphere(POINT(?, ?), POINT(?, ?)) AS distance`,
+          `SELECT ST_DistanceSphere(ST_MakePoint(?, ?), ST_MakePoint(?, ?)) AS distance`,
           [lng, lat, lngOfRes, latOfRes]
         );
 
