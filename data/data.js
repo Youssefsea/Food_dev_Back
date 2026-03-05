@@ -6,11 +6,8 @@ types.setTypeParser(1700, parseFloat);
 types.setTypeParser(20, parseInt);
 
 const pool = new Pool({
-    host: process.env.DB_HOST || 'localhost',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'food',
-    port: process.env.DB_PORT || 5432
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
 });
 
 // Connection check
