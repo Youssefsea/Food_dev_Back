@@ -1,4 +1,9 @@
-const { Pool } = require("pg");
+const { Pool, types } = require("pg");
+
+// Parse NUMERIC/DECIMAL as JavaScript floats (OID 1700)
+types.setTypeParser(1700, parseFloat);
+// Parse BIGINT/INT8 as JavaScript numbers (OID 20) - used by COUNT(*)
+types.setTypeParser(20, parseInt);
 
 const pool = new Pool({
     host: process.env.DB_HOST || 'localhost',
