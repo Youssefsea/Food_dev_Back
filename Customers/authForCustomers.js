@@ -263,4 +263,4 @@ const loginForAdmin=async(req,res)=>
   }
 }
 
-module.exports = { loginForCustomer, signupForCustomer, getProfile, changeUserInfoForCustomer, loginForAdmin };
+module.exports = { loginForCustomer, signupForCustomer, getProfile, changeUserInfoForCustomer, loginForAdmin, sendOTPEmail };
