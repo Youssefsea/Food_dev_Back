@@ -1,11 +1,76 @@
 const data = require("../data/data");
 const bcryptJs = require("bcryptjs");
 const { createToken } = require("../middelware/jwtmake");
+const crypto = require("crypto");
+const NodeCache = require("node-cache");
+const nodemailer = require("nodemailer");
+const otpCache = new NodeCache({ stdTTL: 60, checkperiod: 10 });
+
+async function sendEmail(to, OTP) {
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false,
+    auth: {
+      user: "yassefsea274@gmail.com",
+      pass: "vjgf odiu nnul krpg",
+    },
+  });
+
+  await transporter.sendMail({
+    from: '"My Shop" <yassefsea274@gmail.com>',
+    to,
+    subject: "Email Verification",
+    text: `Your OTP is: ${OTP}`,
+  });
+}
+
+const sendOTPEmail = async (req, res) => {
+  try {
+    const { email, phone } = req.body;
+
+    if (!email || !phone) {
+      return res.status(400).json({ error: "Email and phone are required" });
+    }
+
+    const [existing] = await data.query(
+      "SELECT id FROM users WHERE email = ? OR phone = ?",
+      [email, phone]
+    );
+
+    if (existing.length > 0) {
+      return res.status(409).json({ error: "Email or phone already exists" });
+    }
+
+    const otp = crypto.randomInt(100000, 999999).toString();
+    otpCache.set(email, otp);
+
+    res.status(200).json({ message: "OTP sent to your email successfully" });
+
+    sendEmail(email, otp)
+      .then(() => {
+        console.log(`OTP ${otp} sent to email: ${email}`);
+      })
+      .catch(err => {
+        console.error("Email sending failed:", err);
+      });
+
+  } catch (err) {
+    console.error("Send OTP Error:", err);
+    return res.status(500).json({ error: "Failed to send OTP" });
+  }
+};
 
 
 const signupForCustomer = async (req, res) => {
   try {
-    const { name, email, password, role, phone } = req.body;
+    const { name, email, password, role, phone,otp } = req.body;
+
+        if (!name || !email || !password || !phone || !otp) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    
 if(role==='restaurant')
 {
 
@@ -18,6 +83,15 @@ if(role!=='customer' && role!=='admin')
     return res.status(400).json({ error: "Invalid role" });
 }
 
+       const storedOtp = otpCache.get(email);
+    if (!storedOtp || storedOtp !== otp) {
+      return res.status(400).json({ error: "Invalid or expired OTP" });
+    }
+
+    otpCache.del(email);
+
+
+    
     const [userExists] = await data.query(
       "SELECT * FROM users WHERE email=? OR phone=?",
       [email, phone]
