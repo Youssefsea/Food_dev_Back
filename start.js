@@ -24,12 +24,24 @@ setupChatSocket(io);
 
 app.use(cookieParser());
 
+const allowedOrigins = [
+  "https://food-front-rho.vercel.app"
+];
+
 app.use(cors({
-    origin: true, 
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true               
+  origin: function(origin, callback){
+    if(!origin || allowedOrigins.includes(origin)){
+      callback(null, true);
+    }else{
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"],
+  credentials: true
 }));
+
+app.options('*', cors()); 
 
 app.use(express.json());
 
