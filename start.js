@@ -40,7 +40,7 @@ setupChatSocket(io);
 
 app.use(cookieParser());
 app.use(cors(corsOptions));
-app.options('(.*)', cors(corsOptions));
+app.options('/{*path}', cors(corsOptions))
 
 app.use(express.json());
 app.use('/', router);
